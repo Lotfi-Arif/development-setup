@@ -113,7 +113,7 @@ if ! command_exists node; then
     echo "Installing Node.js..."
     nvm install --lts
     echo "Node.js installed!"
-    
+
     echo "Installing Yarn..."
     npm install -g yarn
     echo "Yarn installed!"
@@ -136,7 +136,7 @@ if ! command_exists go; then
     GO_VERSION="1.23.0"
     wget "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz"
     sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz"
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> "$HOME/.zshrc"
+    echo 'export PATH=$PATH:/usr/local/go/bin' >>"$HOME/.zshrc"
     rm "go${GO_VERSION}.linux-amd64.tar.gz"
     echo "Go (Golang) installed!"
 else
@@ -241,7 +241,7 @@ if ! command_exists flutter; then
     sudo apt-get install -y libglu1-mesa
     sudo snap install android-studio --classic
     git clone https://github.com/flutter/flutter.git "$HOME/flutter"
-    echo 'export PATH="$PATH:$HOME/flutter/bin"' >> "$HOME/.zshrc"
+    echo 'export PATH="$PATH:$HOME/flutter/bin"' >>"$HOME/.zshrc"
     source "$HOME/.zshrc"
     flutter doctor
     echo "Flutter installed!"
@@ -291,6 +291,7 @@ if command_exists code; then
         "dbaeumer.vscode-eslint"
         "donjayamanne.githistory"
         "dsznajder.es7-react-js-snippets"
+        "foxundermoon.shell-format"
         "ecmel.vscode-html-css"
         "equinusocio.vsc-material-theme"
         "equinusocio.vsc-material-theme-icons"
@@ -328,3 +329,13 @@ fi
 
 echo "Installation complete! Please log out and log back in for all changes to take effect."
 echo "After logging back in, run 'nvim' and execute ':MasonInstallAll' to complete NvChad setup."
+
+# Prompt for system restart
+read -p "Do you want to restart the system now to apply all changes? (y/n) " -n 1 -r
+echo # Move to a new line
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "Restarting the system..."
+    sudo shutdown -r now
+else
+    echo "Please remember to restart your system later to ensure all changes take effect."
+fi
