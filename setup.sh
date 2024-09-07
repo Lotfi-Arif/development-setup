@@ -33,7 +33,7 @@ command_exists() {
 install_if_not_exists() {
     if ! command_exists "$1"; then
         log "Installing $1..."
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y "$1"; then
             log "Failed to install $1. Please check your internet connection and try again."
             return 1
         fi
@@ -133,10 +133,10 @@ setup_github_ssh() {
 # Install ZSH plugins
 install_zsh_plugins() {
     local zsh_plugins=(
-        "zsh-users/zsh-autosuggestions"
-        "zsh-users/zsh-syntax-highlighting"
-        "zdharma-continuum/fast-syntax-highlighting"
-        "marlonrichert/zsh-autocomplete"
+        "zsh-autosuggestions"
+        "zsh-syntax-highlighting"
+        "fast-syntax-highlighting"
+        "zsh-autocomplete"
     )
 
     for plugin in "${zsh_plugins[@]}"; do
@@ -277,7 +277,7 @@ install_doppler() {
             return 1
         fi
         echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list >/dev/null
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y doppler; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y doppler; then
             log "Failed to install Doppler CLI."
             return 1
         fi
@@ -293,8 +293,8 @@ install_docker() {
         log "Installing Docker..."
 
         # Install prerequisites
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update &&
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
+        sudo DEBIAN_FRONTEND=noninteractive apt update &&
+            sudo DEBIAN_FRONTEND=noninteractive apt install -y ca-certificates curl gnupg
 
         # Add Docker's GPG key
         sudo install -m 0755 -d /etc/apt/keyrings
@@ -307,8 +307,8 @@ install_docker() {
             sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 
         # Install Docker
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        sudo DEBIAN_FRONTEND=noninteractive apt update
+        sudo DEBIAN_FRONTEND=noninteractive apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
         # Set up Docker group
         sudo groupadd docker 2>/dev/null || true
@@ -345,7 +345,7 @@ install_vscode() {
         # Install the package
         if ! sudo dpkg -i "$deb_file"; then
             log "Failed to install VS Code. Attempting to resolve dependencies..."
-            if ! sudo apt-get install -f -y; then
+            if ! sudo apt install -f -y; then
                 log "Failed to resolve dependencies. Please install VS Code manually."
                 rm -f "$deb_file"
                 return 1
@@ -441,7 +441,7 @@ install_1password() {
         fi
 
         # Install 1Password
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y 1password; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y 1password; then
             log "Failed to install 1Password."
             return 1
         fi
@@ -470,7 +470,7 @@ install_anydesk() {
         echo "deb [signed-by=/etc/apt/keyrings/anydesk.gpg] http://deb.anydesk.com/ all main" | sudo tee /etc/apt/sources.list.d/anydesk-stable.list >/dev/null
 
         # Update package lists and install AnyDesk
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y anydesk; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y anydesk; then
             log "Failed to install AnyDesk. Please check your internet connection and try again."
             return 1
         fi
@@ -486,7 +486,7 @@ install_steam() {
     if ! command_exists steam; then
         log "Installing Steam..."
 
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y steam; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y steam; then
             log "Failed to install Steam. Please check your internet connection and try again."
             return 1
         fi
@@ -497,7 +497,7 @@ install_steam() {
     fi
 }
 
-# Install Flutter
+# Install flutter
 install_flutter() {
     log "Installing Flutter and dependencies..."
 
@@ -508,16 +508,40 @@ install_flutter() {
         "cmake"
         "ninja-build"
         "libgtk-3-dev"
-        "chrome-stable"
     )
 
-    if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"; then
+    if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packages[@]}"; then
         log "Failed to install required packages. Please check your internet connection and try again."
         return 1
     fi
 
+    # Install Google Chrome
+    log "Installing Google Chrome..."
+    local chrome_deb="google-chrome-stable_current_amd64.deb"
+    if ! wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+        log "Failed to download Google Chrome. Please check your internet connection and try again."
+        return 1
+    fi
+    if ! sudo dpkg -i $chrome_deb; then
+        log "Failed to install Google Chrome. Attempting to resolve dependencies..."
+        if ! sudo apt install -f -y; then
+            log "Failed to resolve dependencies. Please install Google Chrome manually."
+            rm $chrome_deb
+            return 1
+        fi
+        # Try installing again after resolving dependencies
+        if ! sudo dpkg -i $chrome_deb; then
+            log "Failed to install Google Chrome. Please install manually."
+            rm $chrome_deb
+            return 1
+        fi
+    fi
+    rm $chrome_deb
+    log "Google Chrome installed successfully."
+
     # Install Android Studio if not already installed
-    if ! snap list | grep -q "android-studio"; then
+    if ! command_exists android-studio; then
+        log "Installing Android Studio..."
         if ! sudo snap install android-studio --classic; then
             log "Failed to install Android Studio. Please check your internet connection and try again."
             return 1
@@ -529,6 +553,7 @@ install_flutter() {
     # Install or update Flutter SDK
     local flutter_dir="$HOME/flutter"
     if [ ! -d "$flutter_dir" ]; then
+        log "Cloning Flutter repository..."
         if ! git clone https://github.com/flutter/flutter.git "$flutter_dir"; then
             log "Failed to clone Flutter repository. Please check your internet connection and try again."
             return 1
@@ -543,7 +568,7 @@ install_flutter() {
 
     # Add Flutter to PATH if not already present
     if ! grep -q "flutter/bin" "$HOME/.zshrc"; then
-        echo 'export PATH="$PATH:$HOME/flutter/bin"' >>"$HOME/.zshrc"
+        echo 'export PATH="$PATH:$HOME/flutter/bin"' >> "$HOME/.zshrc"
         log "Added Flutter to PATH in .zshrc"
     fi
 
@@ -551,14 +576,22 @@ install_flutter() {
     source "$HOME/.zshrc"
 
     # Run flutter doctor
-    flutter doctor || log "Flutter doctor reported issues. Please review and resolve them manually."
+    log "Running flutter doctor..."
+    if ! flutter doctor; then
+        log "Flutter doctor reported issues. Please review and resolve them manually."
+    fi
 
     # Set up Android SDK
     log "Setting up Android SDK..."
-    flutter config --android-sdk "$HOME/Android/Sdk" || log "Failed to set Android SDK path. Please set it manually."
+    if ! flutter config --android-sdk "$HOME/Android/Sdk"; then
+        log "Failed to set Android SDK path. Please set it manually."
+    fi
 
     # Accept Android licenses
-    flutter doctor --android-licenses || log "Failed to accept Android licenses. Please run 'flutter doctor --android-licenses' manually."
+    log "Accepting Android licenses..."
+    if ! flutter doctor --android-licenses; then
+        log "Failed to accept Android licenses. Please run 'flutter doctor --android-licenses' manually."
+    fi
 
     log "Flutter installation/update complete!"
 }
@@ -571,7 +604,7 @@ install_neovim() {
             log "Failed to add Neovim PPA. Please check your internet connection and try again."
             return 1
         fi
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y neovim; then
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y neovim; then
             log "Failed to install Neovim. Please check your internet connection and try again."
             return 1
         fi
@@ -580,7 +613,7 @@ install_neovim() {
         # Install ripgrep (required for Telescope)
         if ! command_exists rg; then
             log "Installing ripgrep..."
-            if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ripgrep; then
+            if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y ripgrep; then
                 log "Failed to install ripgrep. Please check your internet connection and try again."
                 return 1
             fi
@@ -671,7 +704,7 @@ main_setup() {
 
     # Update package lists
     log "Updating package lists..."
-    if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
+    if ! sudo DEBIAN_FRONTEND=noninteractive apt update; then
         log "Failed to update package lists. Please check your internet connection and try again."
         exit 1
     fi
