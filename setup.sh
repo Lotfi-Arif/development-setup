@@ -4,11 +4,20 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Function to handle errors
+# Global variables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="${SCRIPT_DIR}/setup_log.txt"
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Error handling function
 handle_error() {
     local exit_code=$?
     local line_number=$1
-    echo "Error on line $line_number: Command exited with status $exit_code"
+    log "Error on line $line_number: Command exited with status $exit_code"
     exit $exit_code
 }
 
@@ -17,375 +26,700 @@ trap 'handle_error $LINENO' ERR
 
 # Function to check if a command exists
 command_exists() {
-    command -v "$1" >/dev/null 2>&1
+    command -v "$1" &>/dev/null
 }
 
 # Function to install a package if it's not already installed
 install_if_not_exists() {
     if ! command_exists "$1"; then
-        echo "Installing $1..."
-        sudo apt install -y "$1" || {
-            echo "Failed to install $1. Please check your internet connection and try again."
+        log "Installing $1..."
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"; then
+            log "Failed to install $1. Please check your internet connection and try again."
             return 1
-        }
+        fi
     else
-        echo "$1 is already installed."
+        log "$1 is already installed."
     fi
 }
 
 # Function to run commands with error checking
 run_command() {
     if ! "$@"; then
-        echo "Command failed: $*"
+        log "Command failed: $*"
         return 1
     fi
 }
 
-# Update package lists
-echo "Updating package lists..."
-if ! sudo apt update; then
-    echo "Failed to update package lists. Please check your internet connection and try again."
-    exit 1
-fi
-echo "Package lists updated!"
+# Function to run a command in zsh
+run_in_zsh() {
+    zsh -c "$1"
+}
 
-# Install essential packages
-essential_packages=(
-    "zsh"
-    "curl"
-    "git"
-    "unzip"
-    "wget"
-    "apt-transport-https"
-    "ca-certificates"
-    "gnupg"
-    "software-properties-common"
-    "python3"
-    "python3-pip"
-    "flatpak"
-)
-
-for package in "${essential_packages[@]}"; do
-    install_if_not_exists "$package" || exit 1
-done
+# Install and configure zsh
+install_zsh() {
+    install_if_not_exists zsh
+    if [[ $SHELL != */zsh ]]; then
+        log "Setting zsh as the default shell..."
+        chsh -s "$(which zsh)"
+    fi
+}
 
 # Install Oh My ZSH
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    echo "Installing Oh My ZSH..."
-    if ! sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended; then
-        echo "Failed to install Oh My ZSH. Please check your internet connection and try again."
-        exit 1
+install_oh_my_zsh() {
+    if [ ! -d "$HOME/.oh-my-zsh" ]; then
+        log "Installing Oh My ZSH..."
+        if ! run_in_zsh "sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\" \"\" --unattended"; then
+            log "Failed to install Oh My ZSH. Please check your internet connection and try again."
+            return 1
+        fi
+        log "Oh My ZSH installed!"
+    else
+        log "Oh My ZSH is already installed."
     fi
-    echo "Oh My ZSH installed!"
-else
-    echo "Oh My ZSH is already installed."
-fi
+}
+
+# Set up SSH for GitHub
+setup_github_ssh() {
+    local ssh_key_file=""
+
+    # Check for existing SSH keys
+    for key in id_rsa id_ed25519 id_ecdsa id_dsa; do
+        if [[ -f "$HOME/.ssh/${key}" ]]; then
+            ssh_key_file="$HOME/.ssh/${key}"
+            break
+        fi
+    done
+
+    if [[ -z "$ssh_key_file" ]]; then
+        log "No existing SSH key found. Generating a new ED25519 key..."
+        ssh-keygen -t ed25519 -C "lotfi@ninetailed.com" -f "$HOME/.ssh/id_ed25519" -N ""
+        ssh_key_file="$HOME/.ssh/id_ed25519"
+    else
+        log "Existing SSH key found: $ssh_key_file"
+    fi
+
+    # Ensure the SSH agent is running
+    eval "$(ssh-agent -s)"
+    ssh-add "$ssh_key_file"
+
+    # Display the public key
+    log "Your public key is:"
+    cat "${ssh_key_file}.pub"
+    log "Please ensure this key is added to your GitHub account."
+    read -p "Press Enter to continue..."
+
+    # Test the SSH connection
+    log "Testing SSH connection to GitHub..."
+    if ssh -T git@github.com 2>&1 | grep -q "Hi Lotfi-Arif! You've successfully authenticated"; then
+        log "SSH connection to GitHub successful"
+    else
+        log "SSH connection test to GitHub failed. Running verbose test..."
+        if ssh -vT git@github.com 2>&1 | grep -q "You've successfully authenticated"; then
+            log "SSH connection to GitHub successful (verified through verbose output)"
+        else
+            log "SSH connection to GitHub failed."
+            log "Please check the following:"
+            log "1. Ensure the public key is added to your GitHub account"
+            log "2. Check your internet connection"
+            log "3. Verify that github.com is accessible from your network"
+            read -p "Do you want to continue with the script despite the SSH connection issue? (y/n) " continue_script
+            if [[ $continue_script != "y" ]]; then
+                return 1
+            fi
+        fi
+    fi
+}
 
 # Install ZSH plugins
-zsh_plugins=(
-    "zsh-autosuggestions"
-    "zsh-syntax-highlighting"
-    "fast-syntax-highlighting"
-    "zsh-autocomplete"
-)
+install_zsh_plugins() {
+    local zsh_plugins=(
+        "zsh-users/zsh-autosuggestions"
+        "zsh-users/zsh-syntax-highlighting"
+        "zdharma-continuum/fast-syntax-highlighting"
+        "marlonrichert/zsh-autocomplete"
+    )
 
-for plugin in "${zsh_plugins[@]}"; do
-    if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin" ]; then
-        echo "Installing $plugin..."
-        if ! git clone "https://github.com/zsh-users/$plugin.git" "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin"; then
-            echo "Failed to install $plugin. Please check your internet connection and try again."
-            exit 1
+    for plugin in "${zsh_plugins[@]}"; do
+        local plugin_name=$(basename "$plugin")
+        local plugin_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin_name"
+        if [ ! -d "$plugin_dir" ]; then
+            log "Installing $plugin_name..."
+            if ! git clone "https://github.com/${plugin}.git" "$plugin_dir"; then
+                log "Failed to install $plugin_name. Please check your internet connection and try again."
+                return 1
+            fi
+        else
+            log "$plugin_name is already installed."
         fi
-    else
-        echo "$plugin is already installed."
-    fi
-done
+    done
+
+    # Update .zshrc
+    log "Updating .zshrc..."
+    sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete)/' "$HOME/.zshrc"
+    sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$HOME/.zshrc"
+}
 
 # Install JetBrains Mono Nerd Font
-if [ ! -f "$HOME/.local/share/fonts/JetBrains Mono Regular Nerd Font Complete.ttf" ]; then
-    echo "Installing JetBrains Mono Nerd Font..."
-    mkdir -p "$HOME/.local/share/fonts"
-    if ! wget https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/JetBrainsMono.zip; then
-        echo "Failed to download JetBrains Mono Nerd Font. Please check your internet connection and try again."
-        exit 1
-    fi
-    unzip JetBrainsMono.zip -d "$HOME/.local/share/fonts" || {
-        echo "Failed to extract JetBrains Mono Nerd Font."
-        exit 1
-    }
-    fc-cache -fv
-    rm JetBrainsMono.zip
-    echo "JetBrains Mono Nerd Font installed!"
-else
-    echo "JetBrains Mono Nerd Font is already installed."
-fi
+install_jetbrains_mono() {
+    local font_dir="$HOME/.local/share/fonts"
+    local zip_file="JetBrainsMono.zip"
+    local font_url="https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/$zip_file"
 
-# Install Powerlevel10k theme
-if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then
-    echo "Installing Powerlevel10k theme..."
-    if ! git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"; then
-        echo "Failed to install Powerlevel10k theme. Please check your internet connection and try again."
-        exit 1
-    fi
-    echo "Powerlevel10k theme installed!"
-else
-    echo "Powerlevel10k theme is already installed."
-fi
+    mkdir -p "$font_dir"
 
-# Update .zshrc
-echo "Updating .zshrc..."
-sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$HOME/.zshrc" || {
-    echo "Failed to update ZSH theme in .zshrc"
-    exit 1
+    log "Downloading JetBrains Mono Nerd Font..."
+    if ! wget --show-progress -q "$font_url" -O "$zip_file"; then
+        log "Failed to download JetBrains Mono Nerd Font. Please check your internet connection and try again."
+        return 1
+    fi
+
+    log "Extracting fonts..."
+    if ! unzip -o -q "$zip_file" -d "$font_dir"; then
+        log "Failed to extract JetBrains Mono Nerd Font."
+        rm -f "$zip_file"
+        return 1
+    fi
+
+    rm -f "$zip_file"
+
+    log "Updating font cache..."
+    if ! fc-cache -f; then
+        log "Failed to update font cache. You may need to manually refresh your font cache."
+        return 1
+    fi
+
+    log "JetBrains Mono Nerd Font installed successfully!"
 }
-sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete)/' "$HOME/.zshrc" || {
-    echo "Failed to update plugins in .zshrc"
-    exit 1
-}
-echo "Updated .zshrc!"
 
-# Install NVM (Node Version Manager)
-if [ ! -d "$HOME/.nvm" ]; then
-    echo "Installing NVM..."
-    NVM_VERSION="0.40.0"
-    if ! curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash; then
-        echo "Failed to install NVM. Please check your internet connection and try again."
-        exit 1
+# Install NVM
+install_nvm() {
+    if [ ! -d "$HOME/.nvm" ]; then
+        log "Installing NVM..."
+        NVM_VERSION="0.40.0"
+        if ! curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash; then
+            log "Failed to install NVM."
+            return 1
+        fi
+        log "NVM installed!"
+    else
+        log "NVM is already installed."
     fi
-    echo "NVM installed!"
-else
-    echo "NVM is already installed."
-fi
 
-# Load NVM
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    # Add NVM to .zshrc if not already present
+    if ! grep -q 'export NVM_DIR' "$HOME/.zshrc"; then
+        echo 'export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm' >>"$HOME/.zshrc"
+    fi
 
-# Install Node.js and Yarn
-if ! command_exists node; then
-    echo "Installing Node.js..."
+    # Load NVM
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    # Install latest LTS version of Node.js
+    log "Installing latest LTS version of Node.js..."
     if ! nvm install --lts; then
-        echo "Failed to install Node.js. Please check your internet connection and try again."
-        exit 1
+        log "Failed to install Node.js."
+        return 1
     fi
-    echo "Node.js installed!"
 
-    echo "Installing Yarn..."
+    # Install Yarn globally
+    log "Installing Yarn..."
     if ! npm install -g yarn; then
-        echo "Failed to install Yarn. Please check your internet connection and try again."
-        exit 1
+        log "Failed to install Yarn."
+        return 1
     fi
-    echo "Yarn installed!"
-else
-    echo "Node.js is already installed."
-fi
+}
 
-# Install pipenv
-if ! command_exists pipenv; then
-    echo "Installing pipenv..."
-    if ! pip3 install pipenv; then
-        echo "Failed to install pipenv. Please check your internet connection and try again."
-        exit 1
+# Install Pipenv
+install_pipenv() {
+    if ! command_exists pipenv; then
+        log "Installing pipenv..."
+        if ! pip3 install pipenv; then
+            log "Failed to install pipenv."
+            return 1
+        fi
+        log "Pipenv installed!"
+    else
+        log "Pipenv is already installed."
     fi
-    echo "Pipenv installed!"
-else
-    echo "Pipenv is already installed."
-fi
+}
 
-# Install Go (Golang)
-if ! command_exists go; then
-    echo "Installing Go (Golang)..."
-    GO_VERSION="1.23.0"
-    if ! wget "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz"; then
-        echo "Failed to download Go. Please check your internet connection and try again."
-        exit 1
+# Install Go
+install_go() {
+    if ! command_exists go; then
+        log "Installing Go (Golang)..."
+        GO_VERSION="1.23.0"
+        if ! wget -q "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz"; then
+            log "Failed to download Go."
+            return 1
+        fi
+        sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz"
+
+        # Add Go to PATH if not already present
+        if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' "$HOME/.zshrc"; then
+            echo 'export PATH=$PATH:/usr/local/go/bin' >>"$HOME/.zshrc"
+            log "Added Go to PATH in .zshrc"
+        fi
+
+        rm "go${GO_VERSION}.linux-amd64.tar.gz"
+        log "Go (Golang) installed!"
+    else
+        log "Go (Golang) is already installed."
     fi
-    sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-amd64.tar.gz"
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> "$HOME/.zshrc"
-    rm "go${GO_VERSION}.linux-amd64.tar.gz"
-    echo "Go (Golang) installed!"
-else
-    echo "Go (Golang) is already installed."
-fi
+}
 
 # Install Doppler CLI
-if ! command_exists doppler; then
-    echo "Installing Doppler CLI..."
-    if ! curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | sudo apt-key add -; then
-        echo "Failed to add Doppler's GPG key. Please check your internet connection and try again."
-        exit 1
+install_doppler() {
+    if ! command_exists doppler; then
+        log "Installing Doppler CLI..."
+        if ! curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | sudo gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg; then
+            log "Failed to add Doppler's GPG key."
+            return 1
+        fi
+        echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list >/dev/null
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y doppler; then
+            log "Failed to install Doppler CLI."
+            return 1
+        fi
+        log "Doppler CLI installed!"
+    else
+        log "Doppler CLI is already installed."
     fi
-    echo "deb https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list
-    if ! sudo apt-get update && sudo apt-get install -y doppler; then
-        echo "Failed to install Doppler CLI. Please check your internet connection and try again."
-        exit 1
+}
+
+# Install Docker
+install_docker() {
+    if ! command_exists docker; then
+        log "Installing Docker..."
+
+        # Install prerequisites
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update &&
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
+
+        # Add Docker's GPG key
+        sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+        # Add Docker repository
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
+            sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+        # Install Docker
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+        # Set up Docker group
+        sudo groupadd docker 2>/dev/null || true
+        sudo usermod -aG docker "$USER"
+
+        log "Docker installed successfully!"
+
+        # Verify the installation
+        log "Verifying Docker installation..."
+        if sudo docker run hello-world; then
+            log "Docker verification successful!"
+        else
+            log "Docker verification failed. Please check the installation manually."
+        fi
+    else
+        log "Docker is already installed."
     fi
-    echo "Doppler CLI installed!"
-else
-    echo "Doppler CLI is already installed."
-fi
+}
 
-# Install Docker and Docker Compose
-if ! command_exists docker; then
-    echo "Installing Docker..."
-    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -; then
-        echo "Failed to add Docker's GPG key. Please check your internet connection and try again."
-        exit 1
+# Install VS Code
+install_vscode() {
+    if ! command_exists code; then
+        log "Installing Visual Studio Code..."
+
+        local vscode_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
+        local deb_file="vscode.deb"
+
+        # Download the latest VS Code .deb package
+        if ! wget -O "$deb_file" "$vscode_url"; then
+            log "Failed to download VS Code. Please check your internet connection and try again."
+            return 1
+        fi
+
+        # Install the package
+        if ! sudo dpkg -i "$deb_file"; then
+            log "Failed to install VS Code. Attempting to resolve dependencies..."
+            if ! sudo apt-get install -f -y; then
+                log "Failed to resolve dependencies. Please install VS Code manually."
+                rm -f "$deb_file"
+                return 1
+            fi
+            # Try installing again after resolving dependencies
+            if ! sudo dpkg -i "$deb_file"; then
+                log "Failed to install VS Code even after resolving dependencies. Please install manually."
+                rm -f "$deb_file"
+                return 1
+            fi
+        fi
+
+        # Clean up the downloaded .deb file
+        rm -f "$deb_file"
+        log "Visual Studio Code installed successfully!"
+    else
+        log "Visual Studio Code is already installed."
     fi
-    sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-    if ! sudo apt update && sudo apt install -y docker-ce docker-ce-cli containerd.io; then
-        echo "Failed to install Docker. Please check your internet connection and try again."
-        exit 1
+}
+
+# Install JetBrains Toolbox
+install_jetbrains_toolbox() {
+    if ! command_exists jetbrains-toolbox; then
+        log "Installing JetBrains Toolbox..."
+
+        local toolbox_version="2.4.2.32922"
+        local download_url="https://download.jetbrains.com/toolbox/jetbrains-toolbox-${toolbox_version}.tar.gz"
+        local tarball="jetbrains-toolbox.tar.gz"
+
+        # Download the latest JetBrains Toolbox tarball
+        if ! wget -O "$tarball" "$download_url"; then
+            log "Failed to download JetBrains Toolbox. Please check your internet connection and try again."
+            return 1
+        fi
+
+        # Extract the tarball
+        if ! tar -xzf "$tarball"; then
+            log "Failed to extract JetBrains Toolbox."
+            rm -f "$tarball"
+            return 1
+        fi
+
+        # Run the installer
+        local extracted_dir=$(find . -maxdepth 1 -type d -name "jetbrains-toolbox-*" -print -quit)
+        if [ -z "$extracted_dir" ]; then
+            log "Failed to find extracted JetBrains Toolbox directory."
+            rm -f "$tarball"
+            return 1
+        fi
+
+        if ! "$extracted_dir/jetbrains-toolbox"; then
+            log "Failed to run JetBrains Toolbox installer."
+            rm -rf "$extracted_dir" "$tarball"
+            return 1
+        fi
+
+        # Clean up the extracted files and tarball
+        rm -rf "$extracted_dir" "$tarball"
+        log "JetBrains Toolbox installed successfully!"
+    else
+        log "JetBrains Toolbox is already installed."
     fi
-    sudo usermod -aG docker "$USER"
-    echo "Docker installed!"
-else
-    echo "Docker is already installed."
-fi
+}
 
-if ! command_exists docker-compose; then
-    echo "Installing Docker Compose..."
-    if ! sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose; then
-        echo "Failed to download Docker Compose. Please check your internet connection and try again."
-        exit 1
+# Install 1Password
+install_1password() {
+    if ! command_exists 1password; then
+        log "Installing 1Password..."
+
+        # Add the key for the 1Password apt repository
+        if ! curl -sS https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg; then
+            log "Failed to add 1Password repository key."
+            return 1
+        fi
+
+        # Add the 1Password apt repository
+        if ! echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main' | sudo tee /etc/apt/sources.list.d/1password.list >/dev/null; then
+            log "Failed to add 1Password repository."
+            return 1
+        fi
+
+        # Add the debsig-verify policy
+        sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/
+        if ! curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol | sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol >/dev/null; then
+            log "Failed to add debsig-verify policy."
+            return 1
+        fi
+
+        sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22
+        if ! curl -sS https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg; then
+            log "Failed to add debsig keyring."
+            return 1
+        fi
+
+        # Install 1Password
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y 1password; then
+            log "Failed to install 1Password."
+            return 1
+        fi
+
+        log "1Password installed successfully!"
+    else
+        log "1Password is already installed."
     fi
-    sudo chmod +x /usr/local/bin/docker-compose
-    echo "Docker Compose installed!"
-else
-    echo "Docker Compose is already installed."
-fi
-
-# GIT configuration
-echo "Configuring GIT..."
-git config --global user.email "lotfi@ninetailed.com"
-git config --global user.name "Lotfi Arif"
-
-# Add flathub repo
-echo "Adding flathub repo..."
-if ! flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo; then
-    echo "Failed to add Flathub repository. Please check your internet connection and try again."
-    exit 1
-fi
-
-# Install flatpak applications
-flatpak_apps=(
-    "com.stremio.Stremio"
-    "com.visualstudio.code"
-    "md.obsidian.Obsidian"
-    "com.slack.Slack"
-    "com.getpostman.Postman"
-    "com.github.alpaca"
-    "com.github.lainsce.notesnook"
-)
-
-for app in "${flatpak_apps[@]}"; do
-    echo "Installing $app..."
-    if ! flatpak install -y flathub "$app"; then
-        echo "Failed to install $app. Continuing with other installations."
-    fi
-done
+}
 
 # Install AnyDesk
-if ! command_exists anydesk; then
-    echo "Installing AnyDesk..."
-    if ! wget -qO - https://keys.anydesk.com/repos/DEB-GPG-KEY | sudo apt-key add -; then
-        echo "Failed to add AnyDesk's GPG key. Please check your internet connection and try again."
-        exit 1
+install_anydesk() {
+    if ! command_exists anydesk; then
+        log "Installing AnyDesk..."
+
+        # Create the keyrings directory if it doesn't exist
+        sudo mkdir -p /etc/apt/keyrings
+
+        # Download and add the AnyDesk GPG key
+        if ! wget -qO- https://keys.anydesk.com/repos/DEB-GPG-KEY | sudo gpg --dearmor -o /etc/apt/keyrings/anydesk.gpg; then
+            log "Failed to add AnyDesk's GPG key. Please check your internet connection and try again."
+            return 1
+        fi
+
+        # Add the AnyDesk repository
+        echo "deb [signed-by=/etc/apt/keyrings/anydesk.gpg] http://deb.anydesk.com/ all main" | sudo tee /etc/apt/sources.list.d/anydesk-stable.list >/dev/null
+
+        # Update package lists and install AnyDesk
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y anydesk; then
+            log "Failed to install AnyDesk. Please check your internet connection and try again."
+            return 1
+        fi
+
+        log "AnyDesk installed successfully!"
+    else
+        log "AnyDesk is already installed."
     fi
-    echo "deb http://deb.anydesk.com/ all main" | sudo tee /etc/apt/sources.list.d/anydesk-stable.list
-    if ! sudo apt update && sudo apt install -y anydesk; then
-        echo "Failed to install AnyDesk. Please check your internet connection and try again."
-        exit 1
-    fi
-    echo "AnyDesk installed!"
-else
-    echo "AnyDesk is already installed."
-fi
+}
 
 # Install Steam
-if ! command_exists steam; then
-    echo "Installing Steam..."
-    if ! sudo apt install -y steam; then
-        echo "Failed to install Steam. Please check your internet connection and try again."
-        exit 1
-    fi
-    echo "Steam installed!"
-else
-    echo "Steam is already installed."
-fi
+install_steam() {
+    if ! command_exists steam; then
+        log "Installing Steam..."
 
-# Install WebStorm
-if [ ! -d "/opt/webstorm" ]; then
-    echo "Installing WebStorm..."
-    WEBSTORM_VERSION="2024.2"
-    if ! wget -O webstorm.tar.gz "https://download.jetbrains.com/webstorm/WebStorm-${WEBSTORM_VERSION}.tar.gz"; then
-        echo "Failed to download WebStorm. Please check your internet connection and try again."
-        exit 1
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y steam; then
+            log "Failed to install Steam. Please check your internet connection and try again."
+            return 1
+        fi
+
+        log "Steam installed successfully!"
+    else
+        log "Steam is already installed."
     fi
-    sudo tar -xzf webstorm.tar.gz -C /opt || {
-        echo "Failed to extract WebStorm."
-        exit 1
-    }
-    rm webstorm.tar.gz
-    sudo mv "/opt/WebStorm-${WEBSTORM_VERSION}" /opt/webstorm
-    echo "WebStorm installed!"
-else
-    echo "WebStorm is already installed."
-fi
+}
 
 # Install Flutter
-if ! command_exists flutter; then
-    echo "Installing Flutter..."
-    if ! sudo apt-get install -y libglu1-mesa; then
-        echo "Failed to install libglu1-mesa. Please check your internet connection and try again."
-        exit 1
+install_flutter() {
+    log "Installing Flutter and dependencies..."
+
+    # Install required packages
+    local packages=(
+        "libglu1-mesa"
+        "clang"
+        "cmake"
+        "ninja-build"
+        "libgtk-3-dev"
+        "chrome-stable"
+    )
+
+    if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"; then
+        log "Failed to install required packages. Please check your internet connection and try again."
+        return 1
     fi
-    if ! sudo snap install android-studio --classic; then
-        echo "Failed to install Android Studio. Please check your internet connection and try again."
-        exit 1
+
+    # Install Android Studio if not already installed
+    if ! snap list | grep -q "android-studio"; then
+        if ! sudo snap install android-studio --classic; then
+            log "Failed to install Android Studio. Please check your internet connection and try again."
+            return 1
+        fi
+    else
+        log "Android Studio is already installed."
     fi
-    if ! git clone https://github.com/flutter/flutter.git "$HOME/flutter"; then
-        echo "Failed to clone Flutter repository. Please check your internet connection and try again."
-        exit 1
+
+    # Install or update Flutter SDK
+    local flutter_dir="$HOME/flutter"
+    if [ ! -d "$flutter_dir" ]; then
+        if ! git clone https://github.com/flutter/flutter.git "$flutter_dir"; then
+            log "Failed to clone Flutter repository. Please check your internet connection and try again."
+            return 1
+        fi
+    else
+        log "Flutter directory already exists. Updating..."
+        if ! (cd "$flutter_dir" && git pull); then
+            log "Failed to update Flutter. Please check your internet connection and try again."
+            return 1
+        fi
     fi
-    echo 'export PATH="$PATH:$HOME/flutter/bin"' >> "$HOME/.zshrc"
+
+    # Add Flutter to PATH if not already present
+    if ! grep -q "flutter/bin" "$HOME/.zshrc"; then
+        echo 'export PATH="$PATH:$HOME/flutter/bin"' >>"$HOME/.zshrc"
+        log "Added Flutter to PATH in .zshrc"
+    fi
+
+    # Source the updated .zshrc
     source "$HOME/.zshrc"
-    if ! flutter doctor; then
-        echo "Flutter doctor reported issues. Please review and resolve them manually."
-    fi
-    echo "Flutter installed!"
-else
-    echo "Flutter is already installed."
-fi
+
+    # Run flutter doctor
+    flutter doctor || log "Flutter doctor reported issues. Please review and resolve them manually."
+
+    # Set up Android SDK
+    log "Setting up Android SDK..."
+    flutter config --android-sdk "$HOME/Android/Sdk" || log "Failed to set Android SDK path. Please set it manually."
+
+    # Accept Android licenses
+    flutter doctor --android-licenses || log "Failed to accept Android licenses. Please run 'flutter doctor --android-licenses' manually."
+
+    log "Flutter installation/update complete!"
+}
 
 # Install Neovim
-if ! command_exists nvim; then
-    echo "Installing Neovim..."
-    if ! sudo add-apt-repository ppa:neovim-ppa/unstable; then
-        echo "Failed to add Neovim PPA. Please check your internet connection and try again."
-        exit 1
-    fi
-    if ! sudo apt-get update && sudo apt-get install -y neovim; then
-        echo "Failed to install Neovim. Please check your internet connection and try again."
-        exit 1
-    fi
-    echo "Neovim installed!"
-else
-    echo "Neovim is already installed."
-fi
+install_neovim() {
+    if ! command_exists nvim; then
+        log "Installing Neovim..."
+        if ! sudo add-apt-repository -y ppa:neovim-ppa/unstable; then
+            log "Failed to add Neovim PPA. Please check your internet connection and try again."
+            return 1
+        fi
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y neovim; then
+            log "Failed to install Neovim. Please check your internet connection and try again."
+            return 1
+        fi
+        log "Neovim installed!"
 
-# Install ripgrep (required for Telescope)
-if ! command_exists rg; then
-    echo "Installing ripgrep..."
-    if ! sudo apt-get install -y ripgrep; then
-        echo "Failed to install ripgrep. Please check your internet connection and try again."
+        # Install ripgrep (required for Telescope)
+        if ! command_exists rg; then
+            log "Installing ripgrep..."
+            if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ripgrep; then
+                log "Failed to install ripgrep. Please check your internet connection and try again."
+                return 1
+            fi
+            log "ripgrep installed!"
+        else
+            log "ripgrep is already installed."
+        fi
+
+        # Install NvChad
+        if [ ! -d "$HOME/.config/nvim" ]; then
+            log "Installing NvChad..."
+            if ! git clone https://github.com/NvChad/NvChad.git ~/.config/nvim --depth 1; then
+                log "Failed to clone NvChad repository. Please check your internet connection and try again."
+                return 1
+            fi
+            log "NvChad installed!"
+        else
+            log "NvChad is already installed."
+        fi
+    else
+        log "Neovim is already installed."
+    fi
+}
+
+# Configure Git
+configure_git() {
+    log "Configuring GIT..."
+    git config --global user.email "lotfi@ninetailed.com"
+    git config --global user.name "Lotfi Arif"
+}
+
+# Configure Flatpak
+configure_flatpak() {
+    log "Configuring Flatpak..."
+
+    # Install Flatpak if not already installed
+    install_if_not_exists flatpak
+
+    # Remove system-wide Flathub remote if it exists
+    log "Checking for system-wide Flathub remote..."
+    if sudo flatpak remotes --system | grep -q "flathub"; then
+        log "Removing system-wide Flathub remote..."
+        sudo flatpak remote-delete --system flathub || log "Failed to remove system-wide Flathub remote. It may not exist or you may not have the necessary permissions."
+    else
+        log "No system-wide Flathub remote found."
+    fi
+
+    # Add Flathub repository for the current user
+    log "Adding Flathub repository for the current user..."
+    if ! flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo; then
+        log "Failed to add Flathub repository. Please check your internet connection and try again."
+        return 1
+    fi
+
+    # Ensure Flathub is the only remote for the current user
+    log "Ensuring Flathub is the only remote for the current user..."
+    local user_remotes=$(flatpak remotes --user)
+    if [ "$(echo "$user_remotes" | wc -l)" -ne 1 ] || [ "$(echo "$user_remotes" | tr -d '[:space:]')" != "flathub" ]; then
+        log "Unexpected user remotes found. Please check your Flatpak configuration."
+        log "Current user remotes:"
+        log "$user_remotes"
+        return 1
+    fi
+
+    # Install flatpak applications for the current user
+    local flatpak_apps=(
+        "com.stremio.Stremio"
+        "md.obsidian.Obsidian"
+        "com.slack.Slack"
+        "com.getpostman.Postman"
+        "com.discordapp.Discord"
+        "org.qbittorrent.qBittorrent"
+        "io.github.zen_browser.zen"
+        "io.podman_desktop.PodmanDesktop"
+    )
+
+    for app in "${flatpak_apps[@]}"; do
+        log "Installing $app..."
+        if ! flatpak install --user -y flathub "$app"; then
+            log "Failed to install $app. Continuing with other installations."
+        fi
+    done
+}
+
+# Main setup function
+main_setup() {
+    log "Starting setup process..."
+
+    # Update package lists
+    log "Updating package lists..."
+    if ! sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
+        log "Failed to update package lists. Please check your internet connection and try again."
         exit 1
     fi
-    echo "ripgrep installed!"
-else
-    echo "ripgrep is already installed."
-fiu
+    log "Package lists updated successfully!"
 
-# Install NvChad
-if [ ! -d "$HOME/.config/nvim" ]; then
-    echo "Installing NvChad..."
+    # Install essential packages
+    local essential_packages=(
+        "curl" "git" "unzip" "wget" "apt-transport-https" "ca-certificates"
+        "gnupg" "software-properties-common" "python3" "python3-pip" "flatpak" "snapd"
+    )
+    for package in "${essential_packages[@]}"; do
+        install_if_not_exists "$package" || exit 1
+    done
+
+    # Install and configure zsh
+    install_zsh
+    install_oh_my_zsh
+    setup_github_ssh
+    install_zsh_plugins
+
+    # Install development tools
+    install_jetbrains_mono
+    install_nvm
+    install_pipenv
+    install_go
+    install_doppler
+    install_docker
+    install_vscode
+    install_jetbrains_toolbox
+    install_1password
+    install_anydesk
+    install_steam
+    install_flutter
+    install_neovim
+
+    # Configure git
+    configure_git
+
+    # Configure Flatpak
+    configure_flatpak
+
+    log "Setup process completed successfully!"
+    log "Please log out and log back in for all changes to take effect."
+    log "Remember to run 'nvim' to complete the NvChad setup."
+}
+
+# Run the main setup function
+main_setup
+
+# Restart the shell to apply changes
+exec zsh -l
