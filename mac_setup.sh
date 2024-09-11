@@ -21,6 +21,14 @@ handle_error() {
     exit $exit_code
 }
 
+# Install Homebrew if not already installed
+if ! command_exists "brew"; then
+    log "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+else
+    log "Homebrew is already installed."
+fi
+
 # Set up error handling
 trap 'handle_error $LINENO' ERR
 
