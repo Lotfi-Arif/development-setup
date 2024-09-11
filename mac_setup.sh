@@ -210,6 +210,8 @@ install_apps() {
         "docker"
         "1password"
         "iterm2"
+        "postman"
+        "slack"
         "stremio"
         "expressvpn"
         "zen-browser"
