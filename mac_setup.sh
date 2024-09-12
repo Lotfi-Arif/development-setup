@@ -42,10 +42,19 @@ install_brew_package() {
 # Function to install a cask using Homebrew
 install_brew_cask() {
     if ! brew list --cask "$1" &>/dev/null; then
-        log "Installing $1..."
-        brew install --cask "$1"
+        if [ -d "/Applications/$1.app" ]; then
+            log "$1 is already installed outside of Homebrew management."
+            log "You may want to uninstall it manually and reinstall through Homebrew for better management."
+        else
+            log "Installing $1..."
+            if brew install --cask "$1"; then
+                log "$1 installed successfully."
+            else
+                log "Failed to install $1. It might be already installed outside of Homebrew."
+            fi
+        fi
     else
-        log "$1 is already installed."
+        log "$1 is already installed and managed by Homebrew."
     fi
 }
 
@@ -84,11 +93,15 @@ setup_github_ssh() {
 
     # Test the SSH connection
     log "Testing SSH connection to GitHub..."
-    if ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    # Use a more robust test that handles various response scenarios
+    if ssh -T git@github.com 2>&1 | grep -qE "successfully authenticated|You've successfully authenticated"; then
         log "SSH connection to GitHub successful"
     else
-        log "SSH connection test to GitHub failed. Please check your GitHub settings and try again."
-        return 1
+        log "SSH connection test to GitHub produced an unexpected result."
+        log "This could be due to a first-time connection or changes in GitHub's response."
+        log "Please verify the connection manually by running: ssh -T git@github.com"
+        log "If you see a message about successful authentication, the connection is working."
+        read -p "Press Enter to continue with the script, or Ctrl+C to exit and troubleshoot..."
     fi
 }
 
@@ -140,22 +153,39 @@ install_jetbrains_mono() {
 
 # Install ZSH plugins
 install_zsh_plugins() {
-    local zsh_plugins=(
-        "zsh-autosuggestions"
-        "zsh-syntax-highlighting"
-        "fast-syntax-highlighting"
-        "zsh-autocomplete"
-    )
+    local ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 
-    for plugin in "${zsh_plugins[@]}"; do
-        local plugin_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$(basename "$plugin")"
-        if [ -d "$plugin_dir" ]; then
-            log "$plugin is already installed."
-        else
-            log "Installing $plugin..."
-            git clone "https://github.com/${plugin}.git" "$plugin_dir"
-        fi
-    done
+    # Autosuggestions plugin
+    if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
+        log "Installing zsh-autosuggestions plugin..."
+        git clone https://github.com/zsh-users/zsh-autosuggestions.git "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+    else
+        log "zsh-autosuggestions plugin is already installed."
+    fi
+
+    # Syntax highlighting plugin
+    if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
+        log "Installing zsh-syntax-highlighting plugin..."
+        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+    else
+        log "zsh-syntax-highlighting plugin is already installed."
+    fi
+
+    # Fast syntax highlighting plugin
+    if [ ! -d "$ZSH_CUSTOM/plugins/fast-syntax-highlighting" ]; then
+        log "Installing fast-syntax-highlighting plugin..."
+        git clone https://github.com/zdharma-continuum/fast-syntax-highlighting.git "$ZSH_CUSTOM/plugins/fast-syntax-highlighting"
+    else
+        log "fast-syntax-highlighting plugin is already installed."
+    fi
+
+    # Autocomplete plugin
+    if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autocomplete" ]; then
+        log "Installing zsh-autocomplete plugin..."
+        git clone --depth 1 -- https://github.com/marlonrichert/zsh-autocomplete.git "$ZSH_CUSTOM/plugins/zsh-autocomplete"
+    else
+        log "zsh-autocomplete plugin is already installed."
+    fi
 
     # Update .zshrc if needed
     if ! grep -q "zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete" "$HOME/.zshrc"; then
@@ -164,6 +194,8 @@ install_zsh_plugins() {
     else
         log "Plugins are already configured in .zshrc"
     fi
+
+    log "Zsh plugins installation completed."
 }
 
 # Install and configure Powerlevel10k theme
