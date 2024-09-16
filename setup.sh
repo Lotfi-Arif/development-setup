@@ -133,10 +133,10 @@ setup_github_ssh() {
 # Install ZSH plugins
 install_zsh_plugins() {
     local zsh_plugins=(
-        "zsh-autosuggestions"
-        "zsh-syntax-highlighting"
-        "fast-syntax-highlighting"
-        "zsh-autocomplete"
+        "zsh-users/zsh-autosuggestions"
+        "zsh-users/zsh-syntax-highlighting"
+        "zdharma-continuum/fast-syntax-highlighting"
+        "marlonrichert/zsh-autocomplete"
     )
 
     for plugin in "${zsh_plugins[@]}"; do
@@ -144,7 +144,7 @@ install_zsh_plugins() {
         local plugin_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin_name"
         if [ ! -d "$plugin_dir" ]; then
             log "Installing $plugin_name..."
-            if ! git clone "https://github.com/${plugin}.git" "$plugin_dir"; then
+            if ! git clone --depth 1 "https://github.com/${plugin}.git" "$plugin_dir"; then
                 log "Failed to install $plugin_name. Please check your internet connection and try again."
                 return 1
             fi
@@ -156,7 +156,20 @@ install_zsh_plugins() {
     # Update .zshrc
     log "Updating .zshrc..."
     sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete)/' "$HOME/.zshrc"
+    
+    # Check if powerlevel10k theme is installed
+    local p10k_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
+    if [ ! -d "$p10k_dir" ]; then
+        log "Installing powerlevel10k theme..."
+        if ! git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$p10k_dir"; then
+            log "Failed to install powerlevel10k theme. Please check your internet connection and try again."
+            return 1
+        fi
+    fi
+
     sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$HOME/.zshrc"
+
+    log "ZSH plugins and powerlevel10k theme installed successfully!"
 }
 
 # Install JetBrains Mono Nerd Font
@@ -366,50 +379,6 @@ install_vscode() {
     fi
 }
 
-# Install JetBrains Toolbox
-install_jetbrains_toolbox() {
-    if ! command_exists jetbrains-toolbox; then
-        log "Installing JetBrains Toolbox..."
-
-        local toolbox_version="2.4.2.32922"
-        local download_url="https://download.jetbrains.com/toolbox/jetbrains-toolbox-${toolbox_version}.tar.gz"
-        local tarball="jetbrains-toolbox.tar.gz"
-
-        # Download the latest JetBrains Toolbox tarball
-        if ! wget -O "$tarball" "$download_url"; then
-            log "Failed to download JetBrains Toolbox. Please check your internet connection and try again."
-            return 1
-        fi
-
-        # Extract the tarball
-        if ! tar -xzf "$tarball"; then
-            log "Failed to extract JetBrains Toolbox."
-            rm -f "$tarball"
-            return 1
-        fi
-
-        # Run the installer
-        local extracted_dir=$(find . -maxdepth 1 -type d -name "jetbrains-toolbox-*" -print -quit)
-        if [ -z "$extracted_dir" ]; then
-            log "Failed to find extracted JetBrains Toolbox directory."
-            rm -f "$tarball"
-            return 1
-        fi
-
-        if ! "$extracted_dir/jetbrains-toolbox"; then
-            log "Failed to run JetBrains Toolbox installer."
-            rm -rf "$extracted_dir" "$tarball"
-            return 1
-        fi
-
-        # Clean up the extracted files and tarball
-        rm -rf "$extracted_dir" "$tarball"
-        log "JetBrains Toolbox installed successfully!"
-    else
-        log "JetBrains Toolbox is already installed."
-    fi
-}
-
 # Install 1Password
 install_1password() {
     if ! command_exists 1password; then
@@ -449,192 +418,6 @@ install_1password() {
         log "1Password installed successfully!"
     else
         log "1Password is already installed."
-    fi
-}
-
-# Install AnyDesk
-install_anydesk() {
-    if ! command_exists anydesk; then
-        log "Installing AnyDesk..."
-
-        # Create the keyrings directory if it doesn't exist
-        sudo mkdir -p /etc/apt/keyrings
-
-        # Download and add the AnyDesk GPG key
-        if ! wget -qO- https://keys.anydesk.com/repos/DEB-GPG-KEY | sudo gpg --dearmor -o /etc/apt/keyrings/anydesk.gpg; then
-            log "Failed to add AnyDesk's GPG key. Please check your internet connection and try again."
-            return 1
-        fi
-
-        # Add the AnyDesk repository
-        echo "deb [signed-by=/etc/apt/keyrings/anydesk.gpg] http://deb.anydesk.com/ all main" | sudo tee /etc/apt/sources.list.d/anydesk-stable.list >/dev/null
-
-        # Update package lists and install AnyDesk
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y anydesk; then
-            log "Failed to install AnyDesk. Please check your internet connection and try again."
-            return 1
-        fi
-
-        log "AnyDesk installed successfully!"
-    else
-        log "AnyDesk is already installed."
-    fi
-}
-
-# Install Steam
-install_steam() {
-    if ! command_exists steam; then
-        log "Installing Steam..."
-
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y steam; then
-            log "Failed to install Steam. Please check your internet connection and try again."
-            return 1
-        fi
-
-        log "Steam installed successfully!"
-    else
-        log "Steam is already installed."
-    fi
-}
-
-# Install flutter
-install_flutter() {
-    log "Installing Flutter and dependencies..."
-
-    # Install required packages
-    local packages=(
-        "libglu1-mesa"
-        "clang"
-        "cmake"
-        "ninja-build"
-        "libgtk-3-dev"
-    )
-
-    if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packages[@]}"; then
-        log "Failed to install required packages. Please check your internet connection and try again."
-        return 1
-    fi
-
-    # Install Google Chrome
-    log "Installing Google Chrome..."
-    local chrome_deb="google-chrome-stable_current_amd64.deb"
-    if ! wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
-        log "Failed to download Google Chrome. Please check your internet connection and try again."
-        return 1
-    fi
-    if ! sudo dpkg -i $chrome_deb; then
-        log "Failed to install Google Chrome. Attempting to resolve dependencies..."
-        if ! sudo apt install -f -y; then
-            log "Failed to resolve dependencies. Please install Google Chrome manually."
-            rm $chrome_deb
-            return 1
-        fi
-        # Try installing again after resolving dependencies
-        if ! sudo dpkg -i $chrome_deb; then
-            log "Failed to install Google Chrome. Please install manually."
-            rm $chrome_deb
-            return 1
-        fi
-    fi
-    rm $chrome_deb
-    log "Google Chrome installed successfully."
-
-    # Install Android Studio if not already installed
-    if ! command_exists android-studio; then
-        log "Installing Android Studio..."
-        if ! sudo snap install android-studio --classic; then
-            log "Failed to install Android Studio. Please check your internet connection and try again."
-            return 1
-        fi
-    else
-        log "Android Studio is already installed."
-    fi
-
-    # Install or update Flutter SDK
-    local flutter_dir="$HOME/flutter"
-    if [ ! -d "$flutter_dir" ]; then
-        log "Cloning Flutter repository..."
-        if ! git clone https://github.com/flutter/flutter.git "$flutter_dir"; then
-            log "Failed to clone Flutter repository. Please check your internet connection and try again."
-            return 1
-        fi
-    else
-        log "Flutter directory already exists. Updating..."
-        if ! (cd "$flutter_dir" && git pull); then
-            log "Failed to update Flutter. Please check your internet connection and try again."
-            return 1
-        fi
-    fi
-
-    # Add Flutter to PATH if not already present
-    if ! grep -q "flutter/bin" "$HOME/.zshrc"; then
-        echo 'export PATH="$PATH:$HOME/flutter/bin"' >> "$HOME/.zshrc"
-        log "Added Flutter to PATH in .zshrc"
-    fi
-
-    # Source the updated .zshrc
-    source "$HOME/.zshrc"
-
-    # Run flutter doctor
-    log "Running flutter doctor..."
-    if ! flutter doctor; then
-        log "Flutter doctor reported issues. Please review and resolve them manually."
-    fi
-
-    # Set up Android SDK
-    log "Setting up Android SDK..."
-    if ! flutter config --android-sdk "$HOME/Android/Sdk"; then
-        log "Failed to set Android SDK path. Please set it manually."
-    fi
-
-    # Accept Android licenses
-    log "Accepting Android licenses..."
-    if ! flutter doctor --android-licenses; then
-        log "Failed to accept Android licenses. Please run 'flutter doctor --android-licenses' manually."
-    fi
-
-    log "Flutter installation/update complete!"
-}
-
-# Install Neovim
-install_neovim() {
-    if ! command_exists nvim; then
-        log "Installing Neovim..."
-        if ! sudo add-apt-repository -y ppa:neovim-ppa/unstable; then
-            log "Failed to add Neovim PPA. Please check your internet connection and try again."
-            return 1
-        fi
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y neovim; then
-            log "Failed to install Neovim. Please check your internet connection and try again."
-            return 1
-        fi
-        log "Neovim installed!"
-
-        # Install ripgrep (required for Telescope)
-        if ! command_exists rg; then
-            log "Installing ripgrep..."
-            if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y ripgrep; then
-                log "Failed to install ripgrep. Please check your internet connection and try again."
-                return 1
-            fi
-            log "ripgrep installed!"
-        else
-            log "ripgrep is already installed."
-        fi
-
-        # Install NvChad
-        if [ ! -d "$HOME/.config/nvim" ]; then
-            log "Installing NvChad..."
-            if ! git clone https://github.com/NvChad/NvChad.git ~/.config/nvim --depth 1; then
-                log "Failed to clone NvChad repository. Please check your internet connection and try again."
-                return 1
-            fi
-            log "NvChad installed!"
-        else
-            log "NvChad is already installed."
-        fi
-    else
-        log "Neovim is already installed."
     fi
 }
 
@@ -733,12 +516,7 @@ main_setup() {
     install_doppler
     install_docker
     install_vscode
-    install_jetbrains_toolbox
     install_1password
-    install_anydesk
-    install_steam
-    install_flutter
-    install_neovim
 
     # Configure git
     configure_git
