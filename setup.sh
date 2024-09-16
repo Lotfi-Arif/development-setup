@@ -156,7 +156,7 @@ install_zsh_plugins() {
     # Update .zshrc
     log "Updating .zshrc..."
     sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete)/' "$HOME/.zshrc"
-    
+
     # Check if powerlevel10k theme is installed
     local p10k_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
     if [ ! -d "$p10k_dir" ]; then
@@ -379,10 +379,10 @@ install_vscode() {
     fi
 }
 
-# Install 1Password
+# Install 1Password and 1Password CLI
 install_1password() {
-    if ! command_exists 1password; then
-        log "Installing 1Password..."
+    if ! command_exists 1password || ! command_exists op; then
+        log "Installing 1Password and 1Password CLI..."
 
         # Add the key for the 1Password apt repository
         if ! curl -sS https://downloads.1password.com/linux/keys/1password.asc | sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg; then
@@ -391,7 +391,7 @@ install_1password() {
         fi
 
         # Add the 1Password apt repository
-        if ! echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main' | sudo tee /etc/apt/sources.list.d/1password.list >/dev/null; then
+        if ! echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" | sudo tee /etc/apt/sources.list.d/1password.list >/dev/null; then
             log "Failed to add 1Password repository."
             return 1
         fi
@@ -409,15 +409,21 @@ install_1password() {
             return 1
         fi
 
-        # Install 1Password
-        if ! sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y 1password; then
-            log "Failed to install 1Password."
+        # Update package list
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt update; then
+            log "Failed to update package list."
             return 1
         fi
 
-        log "1Password installed successfully!"
+        # Install 1Password and 1Password CLI
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y 1password 1password-cli; then
+            log "Failed to install 1Password and 1Password CLI."
+            return 1
+        fi
+
+        log "1Password and 1Password CLI installed successfully!"
     else
-        log "1Password is already installed."
+        log "1Password and 1Password CLI are already installed."
     fi
 }
 
